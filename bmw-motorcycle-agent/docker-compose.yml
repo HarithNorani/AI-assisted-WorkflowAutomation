@@ -1,0 +1,19 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bmw-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bmw_cases
+      POSTGRES_USER: bmw_user
+      POSTGRES_PASSWORD: bmw_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+
+volumes:
+  postgres_data:
