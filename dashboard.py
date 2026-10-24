@@ -7,6 +7,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from app.workflow import WorkflowOrchestrator
+
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "data" / "service_cases.db"
 
@@ -326,6 +328,64 @@ def load_cases() -> pd.DataFrame:
     return df
 
 
+def render_request_form() -> None:
+    st.markdown(
+        '<div class="section-heading"><h2>Submit a service request</h2>'
+        '<span>Tell us what needs attention</span></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption("Complete the form below. We will classify the request and route it to the right team.")
+
+    with st.form("service_request_form", clear_on_submit=True):
+        first_col, second_col = st.columns(2)
+        with first_col:
+            requester_name = st.text_input("Your name", placeholder="Anna Schneider")
+            organization_name = st.text_input("Organization", placeholder="Example Organization")
+            asset_name = st.text_input("Affected service or asset", placeholder="Example Asset A")
+        with second_col:
+            asset_id = st.text_input("Asset or reference ID", placeholder="ASSET-001")
+            request_type = st.selectbox(
+                "What do you need help with?",
+                options=["service_request", "technical_issue", "policy_case", "inventory_request"],
+                format_func=lambda value: value.replace("_", " ").title(),
+            )
+        issue_summary = st.text_area(
+            "Describe the issue or request",
+            placeholder="Tell us what happened and what help you need.",
+            height=120,
+        )
+        submitted = st.form_submit_button("Submit request", type="primary")
+
+    if not submitted:
+        return
+
+    fields = {
+        "Your name": requester_name,
+        "Organization": organization_name,
+        "Affected service or asset": asset_name,
+        "Asset or reference ID": asset_id,
+        "Description": issue_summary,
+    }
+    missing_fields = [label for label, value in fields.items() if not value.strip()]
+    if missing_fields:
+        st.error(f"Please complete: {', '.join(missing_fields)}.")
+        return
+
+    result = WorkflowOrchestrator().process_request(
+        {
+            "organization_name": organization_name,
+            "requester_name": requester_name,
+            "asset_name": asset_name,
+            "asset_id": asset_id,
+            "issue_summary": issue_summary,
+            "request_type": request_type,
+        }
+    )
+    load_cases.clear()
+    st.success(f"Request submitted successfully. Your reference number is {result['case_id']}.")
+    st.info(f"Recommended team: {result['route_to'].replace('_', ' ').title()}.")
+
+
 def render_dashboard() -> None:
     st.set_page_config(page_title="Workflow Automation Case Radar", layout="wide")
     inject_brand_styles()
@@ -359,9 +419,10 @@ def render_dashboard() -> None:
         unsafe_allow_html=True,
     )
 
+    render_request_form()
     df = load_cases()
     if df.empty:
-        st.warning("No service cases yet. Submit a request through the API to populate the operational view.")
+        st.warning("No service cases yet. Submit a request above to populate the operational view.")
         return
 
     df["created_at"] = pd.to_datetime(df["created_at"])
@@ -414,14 +475,38 @@ def render_dashboard() -> None:
     ].sort_values("created_at", ascending=False).copy()
     recent_cases["created_at"] = recent_cases["created_at"].dt.strftime("%d %b %Y, %H:%M")
     recent_cases["confidence"] = recent_cases["confidence"].map(lambda value: f"{value:.0%}")
+    recent_cases = recent_cases.rename(
+        columns={
+            "id": "Case #",
+            "organization_name": "Organization",
+            "requester_name": "Requester",
+            "asset_name": "Affected asset",
+            "issue_category": "Category",
+            "priority": "Priority",
+            "route_to": "Assigned team",
+            "confidence": "Confidence",
+            "created_at": "Submitted",
+        }
+    )
     st.dataframe(recent_cases, use_container_width=True, hide_index=True)
 
     with st.expander("Operational details"):
-        st.dataframe(
-            df[["id", "organization_name", "requester_name", "asset_name", "asset_id", "issue_category", "route_to", "summary", "missing_fields"]],
-            use_container_width=True,
-            hide_index=True,
+        operational_details = df[
+            ["id", "organization_name", "requester_name", "asset_name", "asset_id", "issue_category", "route_to", "summary", "missing_fields"]
+        ].rename(
+            columns={
+                "id": "Case #",
+                "organization_name": "Organization",
+                "requester_name": "Requester",
+                "asset_name": "Affected asset",
+                "asset_id": "Asset ID",
+                "issue_category": "Category",
+                "route_to": "Assigned team",
+                "summary": "Routing summary",
+                "missing_fields": "Missing information",
+            }
         )
+        st.dataframe(operational_details, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":
